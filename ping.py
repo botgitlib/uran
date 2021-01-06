@@ -2,16 +2,20 @@
 
 import subprocess
 from threading import Thread
+import datetime
 
-def pingsite(site="8.8.8.8", interface=None):
+################################################################################
+#                          Проверка доступности сайта                          #
+################################################################################
+def pingsite(interface=None,site="8.8.8.8"):
   if interface == None:
-    interface = ""
+    interface_option = ""
   else:
-    interface = " -I " + interface
-  connect_result_good = "true"
-  connect_result_bad = "false"
+    interface_option = " -I " + interface
+  connect_result_good = True
+  connect_result_bad = False
   status,ping_result = subprocess.getstatusoutput("ping " + site + \
-    interface + " -c 10 -i 0.5 -W 5 -q 2>/dev/null")
+    interface_option + " -c 10 -i 0.5 -W 5 -q 2>/dev/null")
   if status != 0:
     connect_result = connect_result_bad
   else:
@@ -34,17 +38,62 @@ def pingsite(site="8.8.8.8", interface=None):
       connect_result = connect_result_good
     else:
       connect_result = connect_result_bad
-  print(connect_result)
+  interfaces_results[interface][site] = connect_result
 
-sites = ["8.8.8.8","google.com","ya.ru","10.20.30.40"]
+################################################################################
+#                          Проверка доступности сетей                          #
+################################################################################
+def pingnets():
 
-threads = []
+  threads = dict()
 
-for i in range(len(sites)):
-  threads.insert(i, Thread(target=pingsite, args=(sites[i],)))
+  for interface in interfaces:
+    threads[interface] = dict()
+    interfaces_results[interface] = dict()
+    for site in sites:
+      threads[interface][site] = Thread(target=pingsite, args=(interface,site))
+  for interface in interfaces:
+    for site in sites:
+      threads[interface][site].start()
+  for interface in interfaces:
+    for site in sites:
+      threads[interface][site].join()
 
-for i in range(len(sites)):
-  threads[i].start()
+  for interface in interfaces:
+    for site in sites:
+      if interfaces_results[interface][site] == True:
+        interfaces_results[interface]["result"] = True
+        break
+    else:
+      interfaces_results[interface]["result"] = False
 
-for i in range(len(sites)):
-  threads[i].join()
+################################################################################
+#                              Основная программа                              #
+################################################################################
+sites = ["8.8.8.8", "google.com", "ya.ru"]
+interfaces = ["wlan0", "eth0"]
+interfaces_results = dict()
+
+#logfile = "/var/log/netswitcher/history.log"
+logfile = open("history.log", "a")
+now =  datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S %z")
+logfile.write("\nStart: " + now + "\n")
+
+rtc_gateway_ip = "82.151.118.65"
+beeline_gateway_ip = "81.211.51.5"
+
+error = False
+
+if not error:
+  pingnets()
+  now =  datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S %z")
+  logfile.write("Stop: " + now + "\n")
+  logfile.write("Results:")
+  for interface in interfaces:
+    interface_result = \
+      " " + interface + "=" + str( interfaces_results[interface]["result"] )
+    print( interface_result )
+    logfile.write(interface_result)
+  logfile.write("\n")
+
+logfile.close()

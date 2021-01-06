@@ -1,26 +1,16 @@
-from threading import Thread
+#!/usr/bin/python3
 
-def fff():
-  return 2
+a = dict()
 
-x = Thread(target=fff)
+a['wlan0'] = dict()
 
-x.start()
-y = x.join()
+a['wlan0']['google.com'] = 'true'
+a['wlan0']['ya.ru'] = 'false'
 
-print(y)
+a['eth0'] = dict()
 
-#a=[[]]
+a['eth0']['google.com'] = '1'
+a['eth0']['ya.ru'] = '0'
 
-#a.insert(0,[])
-
-#a[0].insert(0,"asd")
-#a[0].insert(1,"qwe")
-
-#a.insert(1,[])
-
-#a[1].insert(0,"123")
-#a[1].insert(1,"456")
-
-#print(a[1][0])
-
+for i in a:
+  print(i," --- ",a[i])
