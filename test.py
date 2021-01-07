@@ -1,16 +1,7 @@
 #!/usr/bin/python3
 
-a = dict()
+import subprocess
 
-a['wlan0'] = dict()
-
-a['wlan0']['google.com'] = 'true'
-a['wlan0']['ya.ru'] = 'false'
-
-a['eth0'] = dict()
-
-a['eth0']['google.com'] = '1'
-a['eth0']['ya.ru'] = '0'
-
-for i in a:
-  print(i," --- ",a[i])
+ip_route = subprocess.run(['ip route show'], shell=True, \
+  stdout=subprocess.PIPE).stdout.decode('utf-8').rstrip("\n")
+print(ip_route)

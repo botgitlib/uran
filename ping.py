@@ -70,19 +70,48 @@ def pingnets():
 ################################################################################
 #                              Основная программа                              #
 ################################################################################
+# Сайты, доступность к которым будет проверена
 sites = ["8.8.8.8", "google.com", "ya.ru"]
-interfaces = ["wlan0", "eth0"]
+# Сетевые интерфейсы, через которые будет проводится проверка
+interfaces = ["rtc", "beeline"]
+# Словарь, в который будут записаны результаты проверки
 interfaces_results = dict()
+# Адреса шлюзов провайдеров
+rtc_gateway_ip = "82.151.118.65"
+beeline_gateway_ip = "81.211.51.5"
+# Путь к файлу для записи итоговых результатов проверки
+logfile_path = "/var/log/netswitcher/history.log"
 
-#logfile = "/var/log/netswitcher/history.log"
-logfile = open("history.log", "a")
+logfile = open(logfile_path, "a")
 now =  datetime.datetime.now().strftime("%Y.%m.%d %H:%M:%S %z")
 logfile.write("\nStart: " + now + "\n")
 
-rtc_gateway_ip = "82.151.118.65"
-beeline_gateway_ip = "81.211.51.5"
+error = ""
 
-error = False
+ip_route = subprocess.run(['ip route show'], shell=True, \
+  stdout=subprocess.PIPE).stdout.decode('utf-8').rstrip("\n")
+
+# Проверка наличия линков по таблице маршрутизации main
+if ip_route.find("default via") != -1:
+  ip_link_rtc = subprocess.run(['ip link show rtc'], shell=True, \
+    stdout=subprocess.PIPE).stdout.decode('utf-8').rstrip("\n")
+  if ip_link_rtc.find("state UP") != -1:
+    subprocess.run(["sudo ip route add default via " + rtc_gateway_ip + " dev rtc"], \
+      shell=True, stdout=subprocess.PIPE)
+  else:
+    ip_link_beeline = subprocess.run(['ip link show beeline'], shell=True, \
+      stdout=subprocess.PIPE).stdout.decode('utf-8').rstrip("\n")
+    if ip_link_beeline.find("state UP") != -1:
+      subprocess.run(["sudo ip route add default via " + beeline_gateway_ip + " dev beeline"], \
+        shell=True, stdout=subprocess.PIPE)
+    else:  
+      error = "Error: All link are DOWN"
+# Удаление лишних маршрутов по умолчанию из таблицы main
+#   при наличии нескольких таких маршрутов
+if ( ip_route.find("default via").find("dev beeline") != -1 ) \
+  and ( ip_route.find("default via").find("dev rtc") != -1 )
+  subprocess.run(["sudo ip route del default via " + beeline_gateway_ip + " dev beeline"], \
+    shell=True, stdout=subprocess.PIPE)
 
 if not error:
   pingnets()
