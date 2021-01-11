@@ -38,7 +38,7 @@ def pingsite(interface=None,site="8.8.8.8"):
             connect_result = connect_result_good
         else:
             connect_result = connect_result_bad
-        interfaces_results[interface][site] = connect_result
+    interfaces_results[interface][site] = connect_result
 
 ################################################################################
 #                          Проверка доступности сетей                          #
@@ -121,7 +121,7 @@ if error == "":
     for interface in interfaces:
         interface_result = \
             " " + interface + "=" + str( interfaces_results[interface]["result"] )
-        print( interface_result )
+        print( interface_result.strip() )
         logfile.write(interface_result)
     logfile.write("\n")
 # Переключение маршрутов в зависимости от результатов
