@@ -1,0 +1,213 @@
+#!/bin/bash
+
+########################################
+#####  ПРОВЕРКА ДОСТУПНОСТИ САЙТА  #####
+########################################
+function pingsite {
+  # Сайт по умолчанию для проверки работоспособности сети
+  site=8.8.8.8
+  interface=""
+
+  # Изменение параметров ping-а на переданные аргументы командной строки
+  while [ -n "$1" ]
+  do
+    case "$1" in
+      # Выбор интерфейса
+      -I) interface="-I $2"
+        shift;;
+      # Изменение адреса сайта
+      *) site=$1;;
+    esac
+    shift
+  done
+
+  # Пинг сайта
+  ping_result=$(sudo ping $site $interface -c 10 -i 0.5 -W 5 -q 2>/dev/null)
+  # c -- сколько пакетов отослать
+  # i -- через сколько отсылать следующий пакет, мс
+  # w -- сколько ждать ответа, с
+  # q -- вывести только итоговую информацию
+
+  connect_result_good="good"
+  connect_result_bad="bad"
+  if [ $? -ne 0 ]
+  then
+    connect_result=$connect_result_bad
+  else
+    # Выделение результатов пинга
+    ping_result=$(echo "$ping_result" | tail -n 2)
+    # tail берет последние 2 строки, в которых есть общая информация о результате
+    packets_transmitted=$(echo "$ping_result" | sed '1!d' | cut -d "," -f 1 | sed "s/ packets transmitted//")
+    packets_received=$(echo "$ping_result" | sed '1!d' | cut -d "," -f 2 | sed "s/ received//")
+    packets_loss=$(echo "$ping_result" | sed '1!d' | cut -d "," -f 3 | sed "s/% packet loss//")
+    packets_time=$(echo "$ping_result" | sed '1!d' | cut -d "," -f 4 | sed "s/time //" | sed "s/ms//")
+    rtt_min=$(echo "$ping_result" | sed '2!d' | cut -d " " -f 4 | cut -d "/" -f 1)
+    rtt_avg=$(echo "$ping_result" | sed '2!d' | cut -d " " -f 4 | cut -d "/" -f 2)
+    rtt_max=$(echo "$ping_result" | sed '2!d' | cut -d " " -f 4 | cut -d "/" -f 3)
+    rtt_mdev=$(echo "$ping_result" | sed '2!d' | cut -d " " -f 4 | cut -d "/" -f 4)
+    # sed '1!d'          - удалить (d) все строки, кроме (!) строки 1
+    # cut -d "," -f 2    - разбить строку на поля (d) по разделителю "," и выбрать (f) 2-е поле
+    # sed "s/time //"    - заменить в строке (s) подстроку "time " на подстроку "", т.е. удалить подстроку "time " 
+
+    # Определение качества связи
+    if [ "$packets_loss" -lt 35 ] && [ 1 -eq "$(echo "$rtt_avg < 100.0" | bc)" ]
+    then
+      connect_result=$connect_result_good
+    else
+      connect_result=$connect_result_bad
+    fi
+    # bc - интерактивный калькулятор, используется для вычисления результата строки сравнения вещественных чисел 
+  fi
+
+  echo "$site":"$connect_result"
+
+}
+
+########################################
+#####   ПРОВЕРКА ДОСТУПНОСТИ СЕТИ  #####
+########################################
+function pingnet {
+  # Изменение сетевого интерфейса на переданный аргумент командной строки
+  while [ -n "$1" ]
+  do
+    case "$1" in
+      -I) interface="-I $2"
+        shift;;
+      *) interface="";;
+    esac
+    shift
+  done
+
+  #!!!!! Сайты для тестирования сети !!!!!#
+  sites=(" " ya.ru google.com)
+
+  sites_results=$(
+    for i in ${!sites[*]}
+    do
+      pingsite ${sites[$i]} $interface &
+    done
+  )
+  # & - для перехода к следующей команде, без ожидания завершения предыдущей
+
+  interface_result="false"
+  for i in ${!sites[*]}
+  do
+    if [ "good" == $(echo "$sites_results" | sed $(($i+1))'!d' | cut -d ":" -f 2) ]
+    then
+      interface_result="true"
+      break
+    fi
+  done
+
+  interface=$(echo $interface | sed 's/  */ /g' | cut -d " " -f 2)
+
+  echo "$interface:$interface_result"
+
+}
+
+########################################
+#####      ОСНОВНАЯ ПРОГРАММА      #####
+########################################
+
+logfile="/var/log/netswitcher/history.log"
+
+echo "" >> "$logfile"
+echo Start: $(date) | tee -a "$logfile"
+
+rtc_gateway_ip=82.151.118.65
+beeline_gateway_ip=81.211.51.5
+
+# Проверка наличия линков по таблице маршрутизации main
+# и установка маршрутов по умолчанию при необходимости
+error="false"
+ip_route=$(ip route show)
+if [ -z "$(echo "$ip_route" | grep "default via")" ]
+then
+  if [ -n "$(ip link show rtc | grep "state UP")" ]
+  then
+    sudo ip route add default via "$rtc_gateway_ip" dev rtc
+  else
+    if [ -n "$(ip link show beeline | grep "state UP")" ]
+    then
+      sudo ip route add default via "$beeline_gateway_ip" dev beeline
+    else
+      error="Error: All link are DOWN"
+    fi
+  fi
+fi
+if [ -n "$(echo "$ip_route" | grep "default via" | grep "dev beeline")" ] &&
+   [ -n "$(echo "$ip_route" | grep "default via" | grep "dev rtc")" ]
+then
+  sudo ip route del default via "$beeline_gateway_ip" dev beeline
+fi
+
+if [ "$error" = "false" ]
+then
+  #!!!!! Тестируемые сетевые интерфейсы !!!!!#
+  interfaces=(rtc beeline)
+
+  interfaces_results=$(
+    for i in ${!interfaces[*]}
+    do
+      pingnet "-I" ${interfaces[$i]} &
+    done
+  )
+
+  echo Stop: $(date) | tee -a "$logfile"
+  echo Result: $interfaces_results | tee -a "$logfile"
+
+  ### Переключение маршрутов в зависимости от результатов ###
+
+  rtc_status=$(echo "$interfaces_results" | grep rtc | cut -d ":" -f 2)
+  beeline_status=$(echo "$interfaces_results" | grep beeline | cut -d ":" -f 2)
+  ip_rule=$(ip rule show)
+
+  if [ $rtc_status = "true" ] && [ $beeline_status = "false" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x3 lookup beeline")" ]
+  then
+    sudo ip rule del from all fwmark 0x3 lookup beeline
+    sudo ip rule add from all fwmark 0x3 lookup rtc
+  fi
+
+  if [ $rtc_status = "false" ] && [ $beeline_status = "true" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x2 lookup rtc")" ]
+  then
+    sudo ip rule del from all fwmark 0x2 lookup rtc
+    sudo ip rule add from all fwmark 0x2 lookup beeline
+  fi
+
+  if [ $rtc_status = "true" ] && [ $beeline_status = "true" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x2 lookup beeline")" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x3 lookup beeline")" ]
+  then
+    sudo ip rule del from all fwmark 0x2 lookup beeline
+    sudo ip rule add from all fwmark 0x2 lookup rtc
+  fi
+
+  if [ $rtc_status = "true" ] && [ $beeline_status = "true" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x2 lookup rtc")" ] && \
+     [ -n "$(echo "$ip_rule" | grep "from all fwmark 0x3 lookup rtc")" ]
+  then
+    sudo ip rule del from all fwmark 0x3 lookup rtc
+    sudo ip rule add from all fwmark 0x3 lookup beeline
+  fi
+
+  if [ -z "$(echo "$ip_rule" | grep "from all fwmark 0x2 lookup rtc")" ] && \
+     [ -z "$(echo "$ip_rule" | grep "from all fwmark 0x3 lookup beeline")" ] && \
+     [ -z "$(ip ro | grep "default via "$beeline_gateway_ip" dev beeline")" ] && \
+     [ $rtc_status = "false" ] && [ $beeline_status = "true" ]
+  then
+    sudo ip route change default via "$beeline_gateway_ip" dev beeline
+  fi
+
+  if [ -z "$(echo "$ip_rule" | grep "from all fwmark 0x2 lookup rtc")" ] && \
+     [ -z "$(echo "$ip_rule" | grep "from all fwmark 0x3 lookup beeline")" ] && \
+     [ -z "$(ip ro | grep "default via "$rtc_gateway_ip" dev rtc")" ] && \
+     [ $rtc_status = "true" ] && [ $beeline_status = "false" ]
+  then
+    sudo ip route change default via "$rtc_gateway_ip" dev rtc
+  fi
+else
+  echo Stop: $(date) | tee -a "$logfile"
+  echo Result: "$error" | tee -a "$logfile"
+fi

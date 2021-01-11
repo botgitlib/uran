@@ -1,0 +1,10 @@
+[Unit]
+Description=Net testing and provider switching
+After=network.target
+
+[Service]
+ExecStart=/sbin/netswitcher.py
+TimeoutSec=300
+
+[Install]
+WantedBy=multi-user.target
